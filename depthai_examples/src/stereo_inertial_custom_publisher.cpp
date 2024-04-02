@@ -18,6 +18,7 @@
 #include "depthai/pipeline/node/ColorCamera.hpp"
 #include "depthai/pipeline/node/IMU.hpp"
 #include "depthai/pipeline/node/MonoCamera.hpp"
+#include "depthai/pipeline/node/FeatureTracker.hpp"
 #include "depthai/pipeline/node/SpatialDetectionNetwork.hpp"
 #include "depthai/pipeline/node/StereoDepth.hpp"
 #include "depthai/pipeline/node/XLinkIn.hpp"
@@ -25,6 +26,7 @@
 #include "depthai_bridge/BridgePublisher.hpp"
 #include "depthai_bridge/DisparityConverter.hpp"
 #include "depthai_bridge/ImageConverter.hpp"
+#include "depthai_bridge/TrackedFeaturesConverter.hpp"
 #include "depthai_bridge/ImuConverter.hpp"
 #include "depthai_bridge/SpatialDetectionConverter.hpp"
 #include "depthai_bridge/depthaiUtility.hpp"
@@ -44,6 +46,7 @@ std::tuple<dai::Pipeline, int, int> createPipeline(bool enableDepth,
                                                    int detectionClassesCount,
                                                    int acc_freq, 
                                                    int gyro_freq,
+                                                   bool enable_tracking, 
                                                    std::string stereoResolution,
                                                    std::string rgbResolutionStr,
                                                    int rgbScaleNumerator,
@@ -57,8 +60,13 @@ std::tuple<dai::Pipeline, int, int> createPipeline(bool enableDepth,
     auto controlIn = pipeline.create<dai::node::XLinkIn>();
     auto monoLeft = pipeline.create<dai::node::MonoCamera>();
     auto monoRight = pipeline.create<dai::node::MonoCamera>();
+    auto featureTrackerLeft = pipeline.create<dai::node::FeatureTracker>();
+    auto featureTrackerRight = pipeline.create<dai::node::FeatureTracker>();
     auto stereo = pipeline.create<dai::node::StereoDepth>();
     auto xoutDepth = pipeline.create<dai::node::XLinkOut>();
+    auto xoutTrackedFeaturesLeft = pipeline.create<dai::node::XLinkOut>();
+    auto xoutTrackedFeaturesRight = pipeline.create<dai::node::XLinkOut>();
+    auto xinTrackedFeaturesConfig = pipeline.create<dai::node::XLinkIn>();
     auto imu = pipeline.create<dai::node::IMU>();
     auto xoutImu = pipeline.create<dai::node::XLinkOut>();
 
@@ -265,13 +273,38 @@ std::tuple<dai::Pipeline, int, int> createPipeline(bool enableDepth,
             stereo->syncedLeft.link(xoutLeft->input);
             stereo->syncedRight.link(xoutRight->input);
         }
+        if(enable_tracking)
+        {
+            xoutTrackedFeaturesLeft->setStreamName("trackedFeaturesLeft");
+            xoutTrackedFeaturesRight->setStreamName("trackedFeaturesRight");
+            // auto featureTrackerConfig = featureTrackerRight->initialConfig.get();
+        }
     }
 
-    // Link plugins CAM -> STEREO -> XLINK
-    stereo->setRectifyEdgeFillColor(0);
-    monoLeft->out.link(stereo->left);
-    monoRight->out.link(stereo->right);
-
+    // Link plugins CAM ->(Tracker)-> STEREO -> XLINK
+    if(enable_tracking)
+    {
+        monoLeft->out.link(featureTrackerLeft->inputImage);
+        featureTrackerLeft->outputFeatures.link(xoutTrackedFeaturesLeft->input);
+        monoRight->out.link(featureTrackerRight->inputImage);
+        featureTrackerRight->outputFeatures.link(xoutTrackedFeaturesRight->input);
+        featureTrackerLeft->passthroughInputImage.link(stereo->left) ; 
+        featureTrackerRight->passthroughInputImage.link(stereo->right);
+        xinTrackedFeaturesConfig->out.link(featureTrackerLeft->inputConfig);
+        xinTrackedFeaturesConfig->out.link(featureTrackerRight->inputConfig);
+        auto numShaves = 2;
+        auto numMemorySlices = 2;
+        featureTrackerLeft->setHardwareResources(numShaves, numMemorySlices);
+        featureTrackerRight->setHardwareResources(numShaves, numMemorySlices);
+        auto featureTrackerConfig = featureTrackerRight->initialConfig.get();
+    }
+    else
+    {
+        stereo->setRectifyEdgeFillColor(0);
+        monoLeft->out.link(stereo->left);
+        monoRight->out.link(stereo->right);
+    }
+    
     if(enableDepth) {
         stereo->depth.link(xoutDepth->input);
     } else {
@@ -294,7 +327,7 @@ int main(int argc, char** argv) {
     bool lrcheck, extended, subpixel, enableDepth, rectify, depth_aligned, manualExposure;
     bool enableSpatialDetection, enableDotProjector, enableFloodLight;
     bool enableRosBaseTimeUpdate;
-    bool usb2Mode, poeMode, syncNN;
+    bool usb2Mode, poeMode, syncNN,enable_tracking;
     double angularVelCovariance, linearAccelCovariance;
     double dotProjectormA, floodLightmA;
     std::string nnName(BLOB_NAME);  // Set your blob name for the model here
@@ -309,6 +342,7 @@ int main(int argc, char** argv) {
     badParams += !pnh.getParam("imuMode", imuModeParam);
     badParams += !pnh.getParam("acc_freq", acc_freq);
     badParams += !pnh.getParam("gyro_freq", gyro_freq);
+    badParams += !pnh.getParam("enable_tracking", enable_tracking);
 
 
     badParams += !pnh.getParam("lrcheck", lrcheck);
@@ -384,6 +418,7 @@ int main(int argc, char** argv) {
                                                        detectionClassesCount,
                                                        acc_freq, 
                                                        gyro_freq,
+                                                       enable_tracking,
                                                        monoResolution,
                                                        rgbResolution,
                                                        rgbScaleNumerator,
@@ -460,6 +495,34 @@ int main(int argc, char** argv) {
         if(enableFloodLight) {
             device->setIrFloodLightBrightness(floodLightmA);
         }
+    }
+
+    if(enable_tracking)
+    {
+        auto outputFeaturesLeftQueue = device->getOutputQueue("trackedFeaturesLeft", 8, false);
+        auto outputFeaturesRightQueue = device->getOutputQueue("trackedFeaturesRight", 8, false);
+        std::string tfPrefix = "oak";
+        dai::rosBridge::TrackedFeaturesConverter leftConverter(tfPrefix + "_left_camera_optical_frame", true);
+        dai::rosBridge::TrackedFeaturesConverter rightConverter(tfPrefix + "_right_camera_optical_frame", true);
+        dai::rosBridge::BridgePublisher<depthai_ros_msgs::TrackedFeatures, dai::TrackedFeatures> featuresPubL(
+        outputFeaturesLeftQueue,
+        pnh,
+        std::string("features_left"),
+        std::bind(&dai::rosBridge::TrackedFeaturesConverter::toRosMsg, &leftConverter, std::placeholders::_1, std::placeholders::_2),
+        30,
+        "",
+        "features_left");
+        featuresPubL.addPublisherCallback();
+
+        dai::rosBridge::BridgePublisher<depthai_ros_msgs::TrackedFeatures, dai::TrackedFeatures> featuresPubR(
+        outputFeaturesRightQueue,
+        pnh,
+        std::string("features_right"),
+        std::bind(&dai::rosBridge::TrackedFeaturesConverter::toRosMsg, &rightConverter, std::placeholders::_1, std::placeholders::_2),
+        30,
+        "",
+        "features_right");
+        featuresPubR.addPublisherCallback();
     }
 
     dai::rosBridge::ImageConverter converter(tfPrefix + "_left_camera_optical_frame", true);

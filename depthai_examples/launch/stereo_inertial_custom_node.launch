@@ -21,6 +21,7 @@
     <arg name="cam_pitch"             default="0.0" /> <!-- Orientation respect to base frame (i.e. "base_link) -->
     <arg name="cam_yaw"               default="0.0" /> <!-- Orientation respect to base frame (i.e. "base_link) -->
 
+    <arg name="enable_tracking"       default="true"/>
     <arg name="lrcheck"               default="true" /> 
     <arg name="extended"              default="false"/> 
     <arg name="subpixel"              default="true" />
@@ -76,7 +77,7 @@
     </include>
 
     <!-- launch-prefix="xterm -e gdb (add [- - args] without space) -->
-    <node name="stereo_inertial_publisher" pkg="depthai_examples" type="stereo_inertial_node" output="screen" required="true">
+    <node name="stereo_inertial_custom_publisher" pkg="depthai_examples" type="stereo_inertial_node" output="screen" required="true">
         <param name="mxId"                  value="$(arg mxId)"/>
         <param name="usb2Mode"              value="$(arg usb2Mode)"/>
         <param name="poeMode"               value="$(arg poeMode)"/>
