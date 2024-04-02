@@ -108,6 +108,7 @@ dai_add_node(mobilenet_node src/mobilenet_publisher.cpp)
 dai_add_node(rgb_stereo_node src/rgb_stereo_node.cpp)
 dai_add_node(rgb_subscriber_node src/rgb_video_subscriber.cpp)
 dai_add_node(stereo_inertial_node src/stereo_inertial_publisher.cpp)
+dai_add_node(stereo_inertial_custom_node src/stereo_inertial_custom_publisher.cpp)
 dai_add_node(stereo_node src/stereo_publisher.cpp)
 dai_add_node(yolov4_spatial_node src/yolov4_spatial_publisher.cpp)
 dai_add_node(feature_tracker src/feature_tracker_publisher.cpp)
@@ -116,6 +117,8 @@ dai_add_node(feature_tracker src/feature_tracker_publisher.cpp)
 target_compile_definitions(mobilenet_node PRIVATE BLOB_NAME="${mobilenet_blob_name}")
 target_compile_definitions(yolov4_spatial_node PRIVATE BLOB_NAME="${tiny_yolo_v4_blob_name}")
 target_compile_definitions(stereo_inertial_node PRIVATE BLOB_NAME="${tiny_yolo_v4_blob_name}")
+target_compile_definitions(stereo_inertial_custom_node PRIVATE BLOB_NAME="${tiny_yolo_v4_blob_name}")
+
 
 catkin_install_python(PROGRAMS
 scripts/markerPublisher.py
